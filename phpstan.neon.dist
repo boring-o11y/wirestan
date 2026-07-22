@@ -1,0 +1,13 @@
+parameters:
+    level: 8
+    paths:
+        - src
+    excludePaths:
+        - tests/Fixtures/*
+    # The rule compares reflected class-strings against Livewire FQCNs that are
+    # not installed here (only test stubs exist), so PHPStan treats those literal
+    # comparisons as always-false. Don't trust PHPDoc class-string types as certain.
+    treatPhpDocTypesAsCertain: false
+
+includes:
+    - extension.neon

@@ -1,0 +1,27 @@
+parametersSchema:
+    wirestan: structure([
+        reservedProperties: listOf(string())
+    ])
+
+parameters:
+    wirestan:
+        # Framework-reserved Livewire properties. They are declared public by
+        # convention but are never client-editable state, so requiring #[Locked]
+        # on them would be noise.
+        reservedProperties:
+            - listeners
+            - rules
+            - messages
+            - validationAttributes
+            - queryString
+            - paginationTheme
+
+services:
+    -
+        class: BoringO11y\Wirestan\PhpStan\LivewireComponentReflectionDetector
+    -
+        class: BoringO11y\Wirestan\PhpStan\Rules\LockedPublicPropertyRule
+        arguments:
+            reservedProperties: %wirestan.reservedProperties%
+        tags:
+            - phpstan.rules.rule

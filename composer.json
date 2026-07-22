@@ -1,0 +1,70 @@
+{
+    "name": "boring-o11y/wirestan",
+    "description": "PHPStan rule for Livewire components: public properties that are never reassigned outside lifecycle methods must be marked #[Locked], so the client cannot tamper with them via $wire.set.",
+    "type": "phpstan-extension",
+    "keywords": [
+        "phpstan",
+        "larastan",
+        "static-analysis",
+        "laravel",
+        "livewire",
+        "security",
+        "phpstan-extension",
+        "phpstan-rules"
+    ],
+    "homepage": "https://github.com/boring-o11y/wirestan",
+    "license": "MIT",
+    "authors": [
+        {
+            "name": "Boring Observability",
+            "email": "tech@boring-observability.dev",
+            "homepage": "https://github.com/boring-o11y"
+        }
+    ],
+    "support": {
+        "issues": "https://github.com/boring-o11y/wirestan/issues",
+        "source": "https://github.com/boring-o11y/wirestan"
+    },
+    "require": {
+        "php": "^8.2",
+        "nikic/php-parser": "^4.18 || ^5.0"
+    },
+    "require-dev": {
+        "phpstan/phpstan": "^2.0",
+        "phpunit/phpunit": "^10.0 || ^11.0 || ^12.0"
+    },
+    "suggest": {
+        "phpstan/phpstan": "Required to use this rule",
+        "phpstan/extension-installer": "Auto-registers extension.neon so you don't have to include it by hand",
+        "larastan/larastan": "Recommended host extension; this rule is designed to run alongside it"
+    },
+    "autoload": {
+        "psr-4": {
+            "BoringO11y\\Wirestan\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "BoringO11y\\Wirestan\\Tests\\": "tests/"
+        }
+    },
+    "extra": {
+        "phpstan": {
+            "includes": [
+                "extension.neon"
+            ]
+        }
+    },
+    "scripts": {
+        "test": "phpunit",
+        "phpstan": "phpstan analyse"
+    },
+    "config": {
+        "sort-packages": true,
+        "allow-plugins": {
+            "phpstan/extension-installer": true
+        }
+    },
+    "minimum-stability": "stable",
+    "prefer-stable": true
+}
