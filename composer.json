@@ -26,7 +26,7 @@
         "source": "https://github.com/boring-o11y/wirestan"
     },
     "require": {
-        "php": "^8.2",
+        "php": "^8.4",
         "nikic/php-parser": "^4.18 || ^5.0"
     },
     "require-dev": {
