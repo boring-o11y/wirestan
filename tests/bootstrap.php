@@ -4,13 +4,12 @@ declare(strict_types=1);
 
 require __DIR__ . '/../vendor/autoload.php';
 
-// Register the Livewire stubs as if they were a real installed package, so
-// fixture classes that `use Livewire\Component` and `use Livewire\Attributes\Locked`
+// Register the Livewire and Laravel stubs as if they were real installed packages,
+// so fixture classes that `use Livewire\Component` or extend an Eloquent model
 // resolve during reflection-based tests.
 spl_autoload_register(function (string $class): void {
-    if (str_starts_with($class, 'Livewire\\')) {
-        $relative = substr($class, \strlen('Livewire\\'));
-        $path = __DIR__ . '/Stubs/Livewire/' . str_replace('\\', '/', $relative) . '.php';
+    if (str_starts_with($class, 'Livewire\\') || str_starts_with($class, 'Illuminate\\')) {
+        $path = __DIR__ . '/Stubs/' . str_replace('\\', '/', $class) . '.php';
         if (is_file($path)) {
             require $path;
         }

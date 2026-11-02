@@ -1,6 +1,6 @@
 {
     "name": "boring-o11y/wirestan",
-    "description": "PHPStan rule for Livewire components: public properties that are never reassigned outside lifecycle methods must be marked #[Locked], so the client cannot tamper with them via $wire.set.",
+    "description": "PHPStan rules for Livewire components: catches client-tamperable state, missing authorization, cached data leaking across users, and validation that never runs.",
     "type": "phpstan-extension",
     "keywords": [
         "phpstan",
@@ -34,9 +34,9 @@
         "phpunit/phpunit": "^10.0 || ^11.0 || ^12.0"
     },
     "suggest": {
-        "phpstan/phpstan": "Required to use this rule",
+        "phpstan/phpstan": "Required to use these rules",
         "phpstan/extension-installer": "Auto-registers extension.neon so you don't have to include it by hand",
-        "larastan/larastan": "Recommended host extension; this rule is designed to run alongside it"
+        "larastan/larastan": "Recommended host extension; these rules are designed to run alongside it"
     },
     "autoload": {
         "psr-4": {
@@ -46,7 +46,10 @@
     "autoload-dev": {
         "psr-4": {
             "BoringO11y\\Wirestan\\Tests\\": "tests/"
-        }
+        },
+        "classmap": [
+            "tests/Fixtures"
+        ]
     },
     "extra": {
         "phpstan": {

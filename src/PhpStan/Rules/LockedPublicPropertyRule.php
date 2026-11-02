@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace BoringO11y\Wirestan\PhpStan\Rules;
 
+use BoringO11y\Wirestan\PhpStan\LivewireAttributes;
 use BoringO11y\Wirestan\PhpStan\LivewireComponentReflectionDetector;
 use PhpParser\Node;
 use PhpParser\Node\Expr\Array_;
@@ -44,8 +45,6 @@ use PHPStan\Type\ObjectType;
  */
 final class LockedPublicPropertyRule implements Rule
 {
-    private const LOCKED_ATTRIBUTE_FQCN = 'Livewire\\Attributes\\Locked';
-
     private const LIVEWIRE_FORM_FQCN = 'Livewire\\Form';
 
     /**
@@ -134,7 +133,12 @@ final class LockedPublicPropertyRule implements Rule
             if ($this->isFormProperty($classReflection, $name)) {
                 continue;
             }
-            if ($this->hasLockedAttribute($propertyContext['property'])) {
+            if (LivewireAttributes::has($propertyContext['property']->attrGroups, LivewireAttributes::LOCKED)) {
+                continue;
+            }
+            // #[Url] means the visitor sets this from the query string, so it's
+            // input, and locking it is what LockedUrlConflictRule reports.
+            if (LivewireAttributes::has($propertyContext['property']->attrGroups, LivewireAttributes::URL)) {
                 continue;
             }
 
@@ -398,18 +402,5 @@ final class LockedPublicPropertyRule implements Rule
         $type = $classReflection->getNativeProperty($name)->getReadableType();
 
         return (new ObjectType(self::LIVEWIRE_FORM_FQCN))->isSuperTypeOf($type)->yes();
-    }
-
-    private function hasLockedAttribute(Property $property): bool
-    {
-        foreach ($property->attrGroups as $group) {
-            foreach ($group->attrs as $attribute) {
-                if ($attribute->name->toString() === self::LOCKED_ATTRIBUTE_FQCN) {
-                    return true;
-                }
-            }
-        }
-
-        return false;
     }
 }

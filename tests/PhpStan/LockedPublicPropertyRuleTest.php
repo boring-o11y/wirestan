@@ -84,6 +84,17 @@ final class LockedPublicPropertyRuleTest extends RuleTestCase
         );
     }
 
+    public function test_does_not_flag_url_bound_property(): void
+    {
+        // #[Url] means the visitor sets the value, and #[Locked] alongside it is
+        // what LockedUrlConflictRule reports, so asking for the lock would leave
+        // no way to satisfy both rules.
+        $this->analyse(
+            [__DIR__ . '/../Fixtures/PhpStan/UrlBoundComponent.php'],
+            [],
+        );
+    }
+
     public function test_reset_with_named_argument_only_exempts_that_property(): void
     {
         // $this->reset('search') resets only $search, so the component is NOT

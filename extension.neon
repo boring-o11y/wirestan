@@ -1,27 +1,66 @@
 parametersSchema:
     wirestan: structure([
         reservedProperties: listOf(string())
+        authorizationMethods: listOf(string())
     ])
 
 parameters:
     wirestan:
-        # Framework-reserved Livewire properties. They are declared public by
-        # convention but are never client-editable state, so requiring #[Locked]
-        # on them would be noise.
+        # Properties that configure Livewire rather than hold component state, so
+        # LockedPublicPropertyRule doesn't ask for #[Locked] on them. They should be
+        # protected: a public one is client-editable, which is what
+        # PublicReservedPropertyRule reports.
         reservedProperties:
             - listeners
             - rules
             - messages
             - validationAttributes
+            - validationCustomValues
             - queryString
             - paginationTheme
+        # Your own method or function names that count as an authorization check,
+        # for guards ModelParamWithoutAuthorizationRule can't see, such as those
+        # defined on a parent class.
+        authorizationMethods: []
 
 services:
     -
         class: BoringO11y\Wirestan\PhpStan\LivewireComponentReflectionDetector
     -
+        class: BoringO11y\Wirestan\PhpStan\AuthorizationGuardDetector
+        arguments:
+            authorizationMethods: %wirestan.authorizationMethods%
+    -
         class: BoringO11y\Wirestan\PhpStan\Rules\LockedPublicPropertyRule
         arguments:
             reservedProperties: %wirestan.reservedProperties%
+        tags:
+            - phpstan.rules.rule
+    -
+        class: BoringO11y\Wirestan\PhpStan\Rules\PublicReservedPropertyRule
+        tags:
+            - phpstan.rules.rule
+    -
+        class: BoringO11y\Wirestan\PhpStan\Rules\ComputedCacheScopeRule
+        tags:
+            - phpstan.rules.rule
+    -
+        class: BoringO11y\Wirestan\PhpStan\Rules\ModelParamWithoutAuthorizationRule
+        tags:
+            - phpstan.rules.rule
+    -
+        class: BoringO11y\Wirestan\PhpStan\Rules\ValidationNeverEnforcedRule
+        tags:
+            - phpstan.rules.rule
+    -
+        class: BoringO11y\Wirestan\PhpStan\Rules\LockedUrlConflictRule
+        tags:
+            - phpstan.rules.rule
+    -
+        class: BoringO11y\Wirestan\PhpStan\Rules\LegacyComputedAccessorRule
+        tags:
+            - phpstan.rules.rule
+    -
+        class: BoringO11y\Wirestan\PhpStan\Rules\AuthorizeTargetRule
         tags:
             - phpstan.rules.rule

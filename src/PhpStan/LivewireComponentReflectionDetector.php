@@ -15,6 +15,8 @@ final class LivewireComponentReflectionDetector
 {
     private const LIVEWIRE_COMPONENT_FQCN = 'Livewire\\Component';
 
+    private const LIVEWIRE_FORM_FQCN = 'Livewire\\Form';
+
     /**
      * @var array<string, bool>
      */
@@ -39,5 +41,10 @@ final class LivewireComponentReflectionDetector
         }
 
         return $this->cache[$name] = false;
+    }
+
+    public function isLivewireForm(ClassReflection $classReflection): bool
+    {
+        return $classReflection->is(self::LIVEWIRE_FORM_FQCN);
     }
 }
