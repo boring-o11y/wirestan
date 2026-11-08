@@ -2,6 +2,7 @@ parametersSchema:
     wirestan: structure([
         reservedProperties: listOf(string())
         authorizationMethods: listOf(string())
+        viewPaths: listOf(string())
     ])
 
 parameters:
@@ -22,6 +23,10 @@ parameters:
         # for guards ModelParamWithoutAuthorizationRule can't see, such as those
         # defined on a parent class.
         authorizationMethods: []
+        # Where LockedPublicPropertyRule looks for the Blade views a component renders,
+        # so it doesn't ask for #[Locked] on a property bound with wire:model.
+        viewPaths:
+            - %currentWorkingDirectory%/resources/views
 
 services:
     -
@@ -30,6 +35,10 @@ services:
         class: BoringO11y\Wirestan\PhpStan\AuthorizationGuardDetector
         arguments:
             authorizationMethods: %wirestan.authorizationMethods%
+    -
+        class: BoringO11y\Wirestan\PhpStan\ComponentViews
+        arguments:
+            viewPaths: %wirestan.viewPaths%
     -
         class: BoringO11y\Wirestan\PhpStan\Rules\LockedPublicPropertyRule
         arguments:
@@ -62,5 +71,29 @@ services:
             - phpstan.rules.rule
     -
         class: BoringO11y\Wirestan\PhpStan\Rules\AuthorizeTargetRule
+        tags:
+            - phpstan.rules.rule
+    -
+        class: BoringO11y\Wirestan\PhpStan\Rules\ReactiveMutationRule
+        tags:
+            - phpstan.rules.rule
+    -
+        class: BoringO11y\Wirestan\PhpStan\Rules\AsyncMutationRule
+        tags:
+            - phpstan.rules.rule
+    -
+        class: BoringO11y\Wirestan\PhpStan\Rules\ReservedActionNameRule
+        tags:
+            - phpstan.rules.rule
+    -
+        class: BoringO11y\Wirestan\PhpStan\Rules\ComputedMisuseRule
+        tags:
+            - phpstan.rules.rule
+    -
+        class: BoringO11y\Wirestan\PhpStan\Rules\ResetTargetRule
+        tags:
+            - phpstan.rules.rule
+    -
+        class: BoringO11y\Wirestan\PhpStan\Rules\NonPersistedStateRule
         tags:
             - phpstan.rules.rule

@@ -4,34 +4,25 @@ declare(strict_types=1);
 
 namespace BoringO11y\Wirestan\PhpStan\Rules;
 
+use BoringO11y\Wirestan\PhpStan\ComponentMethods;
+use BoringO11y\Wirestan\PhpStan\ComponentViews;
 use BoringO11y\Wirestan\PhpStan\LivewireAttributes;
 use BoringO11y\Wirestan\PhpStan\LivewireComponentReflectionDetector;
+use BoringO11y\Wirestan\PhpStan\PropertyTypes;
+use BoringO11y\Wirestan\PhpStan\PropertyWrites;
+use BoringO11y\Wirestan\PhpStan\ViewBindings;
 use PhpParser\Node;
 use PhpParser\Node\Expr\Array_;
-use PhpParser\Node\Expr\ArrayDimFetch;
-use PhpParser\Node\Expr\Assign;
-use PhpParser\Node\Expr\AssignOp;
-use PhpParser\Node\Expr\AssignRef;
-use PhpParser\Node\Expr\List_;
 use PhpParser\Node\Expr\MethodCall;
-use PhpParser\Node\Expr\PostDec;
-use PhpParser\Node\Expr\PostInc;
-use PhpParser\Node\Expr\PreDec;
-use PhpParser\Node\Expr\PreInc;
-use PhpParser\Node\Expr\PropertyFetch;
-use PhpParser\Node\Expr\Variable;
 use PhpParser\Node\Scalar\String_;
 use PhpParser\Node\Stmt\Class_;
-use PhpParser\Node\Stmt\ClassMethod;
 use PhpParser\Node\Stmt\Property;
-use PhpParser\NodeFinder;
+use PhpParser\Node\Stmt\Return_;
 use PHPStan\Analyser\Scope;
-use PHPStan\Node\InClassNode;
-use PHPStan\Reflection\ClassReflection;
+use PHPStan\Node\ClassMethodsNode;
 use PHPStan\Rules\IdentifierRuleError;
 use PHPStan\Rules\Rule;
 use PHPStan\Rules\RuleErrorBuilder;
-use PHPStan\Type\ObjectType;
 
 /**
  * Public Livewire properties that are never reassigned outside lifecycle
@@ -41,12 +32,14 @@ use PHPStan\Type\ObjectType;
  * IDOR / data-tampering vector for fields that the server is supposed to
  * control.
  *
- * @implements Rule<InClassNode>
+ * A property the code treats as client input is left alone, because locking it throws
+ * CannotUpdateLockedPropertyException: one bound in a view, with an input attribute or
+ * an update hook, or named in validation rules. So is one the client can't write.
+ *
+ * @implements Rule<ClassMethodsNode>
  */
 final class LockedPublicPropertyRule implements Rule
 {
-    private const LIVEWIRE_FORM_FQCN = 'Livewire\\Form';
-
     /**
      * Lifecycle methods whose property writes count as "seeding" (initial,
      * server-controlled state), not as a user-driven mutation. A property
@@ -62,17 +55,16 @@ final class LockedPublicPropertyRule implements Rule
     ];
 
     /**
-     * `$this->` calls that can mass-assign arbitrary public properties. When a
-     * non-seed method uses one we cannot statically prove any public property
-     * is immutable, so we treat them all as mutated (no Locked requirement)
-     * rather than emit false positives.
+     * Mark a property as input the client sets, or, for #[Reactive], as one it can't.
+     * #[Url] also keeps LockedUrlConflictRule satisfiable: it reports the lock.
      */
-    private const OPAQUE_MUTATORS = [
-        'fill',
-        'fillData',
-        'mergeData',
-        'reset',
-        'resetExcept',
+    private const INPUT_ATTRIBUTES = [
+        LivewireAttributes::MODELABLE,
+        LivewireAttributes::REACTIVE,
+        LivewireAttributes::RULE,
+        LivewireAttributes::SESSION,
+        LivewireAttributes::URL,
+        LivewireAttributes::VALIDATE,
     ];
 
     /**
@@ -80,12 +72,13 @@ final class LockedPublicPropertyRule implements Rule
      */
     public function __construct(
         private readonly LivewireComponentReflectionDetector $detector,
+        private readonly ComponentViews $views,
         private readonly array $reservedProperties = [],
     ) {}
 
     public function getNodeType(): string
     {
-        return InClassNode::class;
+        return ClassMethodsNode::class;
     }
 
     /**
@@ -98,7 +91,7 @@ final class LockedPublicPropertyRule implements Rule
             return [];
         }
 
-        $originalNode = $node->getOriginalNode();
+        $originalNode = $node->getClass();
         if (! $originalNode instanceof Class_) {
             return [];
         }
@@ -108,48 +101,61 @@ final class LockedPublicPropertyRule implements Rule
             return [];
         }
 
-        ['opaque' => $opaque, 'mutated' => $mutated] = $this->analyseMutationsOutsideSeedMethods($originalNode);
+        $methods = ComponentMethods::fromNode($node);
+        $mutated = $this->mutatedOutsideSeedMethods($methods);
 
         // An opaque mass-assignment (`$this->fill()`, no-arg `$this->reset()`,
         // `resetExcept()`, or a dynamic `$this->{$x} = …`) can touch any public
         // property, so immutability can't be proven — skip the whole component.
-        if ($opaque) {
+        if ($mutated === null) {
             return [];
         }
 
+        $validated = $this->validatedProperties($originalNode, $methods);
+        $bindings = null;
+
         $errors = [];
         foreach ($publicProperties as $name => $propertyContext) {
-            if (\in_array($name, $mutated, true)) {
+            if (isset($mutated[$name]) || isset($validated[$name])) {
                 continue;
             }
             if (\in_array($name, $this->reservedProperties, true)) {
                 continue;
             }
-            // Livewire\Form properties are mutated through nested fields
-            // (wire:model="form.field") and never reassigned wholesale, so they
-            // read as immutable here. Locking the root breaks every nested
-            // update at runtime (CannotUpdateLockedPropertyException) — Livewire
-            // de/hydrates Forms natively, so they're never a $wire.set vector.
-            if ($this->isFormProperty($classReflection, $name)) {
+            if (LivewireAttributes::has($propertyContext['property']->attrGroups, LivewireAttributes::LOCKED, ...self::INPUT_ATTRIBUTES)) {
                 continue;
             }
-            if (LivewireAttributes::has($propertyContext['property']->attrGroups, LivewireAttributes::LOCKED)) {
+            // A Form's fields are updated through `wire:model="form.field"`, so its
+            // property reads as immutable. Locking the root breaks every one of those
+            // updates at runtime with CannotUpdateLockedPropertyException.
+            if (PropertyTypes::isForm($classReflection, $name)) {
                 continue;
             }
-            // #[Url] means the visitor sets this from the query string, so it's
-            // input, and locking it is what LockedUrlConflictRule reports.
-            if (LivewireAttributes::has($propertyContext['property']->attrGroups, LivewireAttributes::URL)) {
+            if (PropertyTypes::isClientProofModelState($classReflection, $name)) {
+                continue;
+            }
+            if ($this->hasUpdateHook($methods, $name)) {
                 continue;
             }
 
-            $errors[] = RuleErrorBuilder::message(\sprintf(
+            $bindings ??= $this->views->bindingsOf($node, $methods, $scope);
+            if ($bindings->binds($name)) {
+                continue;
+            }
+
+            $error = RuleErrorBuilder::message(\sprintf(
                 'Livewire public property %s::$%s is never reassigned outside lifecycle methods. It must be marked #[Livewire\Attributes\Locked] — otherwise the client can mutate it via $wire.set.',
                 $classReflection->getDisplayName(),
                 $name,
             ))
                 ->identifier('boringO11yWirestan.lockedPublicProperty')
-                ->line($propertyContext['line'])
-                ->build();
+                ->line($propertyContext['line']);
+
+            if (! $bindings->complete) {
+                $error->tip('wirestan could not read every view this component renders, so a binding may be missing here. If a wire:model does bind this property, ignore this error rather than locking it: a locked input throws CannotUpdateLockedPropertyException.');
+            }
+
+            $errors[] = $error->build();
         }
 
         return $errors;
@@ -182,225 +188,130 @@ final class LockedPublicPropertyRule implements Rule
     }
 
     /**
-     * Walk every non-seed method once, collecting the names of mutated public
-     * properties and detecting any opaque mass-assignment that defeats static
-     * proof of immutability.
+     * The properties written by any non-seed method, or null when one of them does
+     * something that could write any property.
      *
-     * @return array{opaque: bool, mutated: list<string>}
+     * @return array<string, true>|null
      */
-    private function analyseMutationsOutsideSeedMethods(Class_ $class): array
+    private function mutatedOutsideSeedMethods(ComponentMethods $methods): ?array
     {
-        $finder = new NodeFinder;
         $mutated = [];
-        $opaque = false;
 
-        foreach ($class->stmts as $stmt) {
-            if (! $stmt instanceof ClassMethod) {
-                continue;
-            }
-            if (\in_array($stmt->name->toString(), self::SEED_METHODS, true)) {
-                continue;
-            }
-            if ($stmt->stmts === null) {
+        foreach ($methods->all() as $method) {
+            if (\in_array($method->name->toLowerString(), self::SEED_METHODS, true)) {
                 continue;
             }
 
-            $nodes = $finder->find(
-                $stmt->stmts,
-                fn (Node $node) => $this->isMutatingNode($node) || $this->isMassAssignmentCall($node),
-            );
+            $writes = PropertyWrites::in($method);
+            if ($writes->dynamic || $writes->mass !== []) {
+                return null;
+            }
 
-            foreach ($nodes as $node) {
-                if ($node instanceof MethodCall) {
-                    // $this->reset('a', 'b') reassigns only the named properties;
-                    // any other mass-assignment form is opaque.
-                    $names = $this->resetTargetNames($node);
-                    if ($names === null) {
-                        $opaque = true;
-                    } else {
-                        foreach ($names as $name) {
-                            $mutated[] = $name;
-                        }
-                    }
-
-                    continue;
-                }
-
-                // Dynamic write: $this->{$expr} = … — name computed, can't track.
-                if ($this->isDynamicPropertyWrite($node)) {
-                    $opaque = true;
-
-                    continue;
-                }
-
-                foreach ($this->extractMutatedPropertyNames($node) as $name) {
-                    $mutated[] = $name;
-                }
+            foreach ($writes->named as $write) {
+                $mutated[$write->name] = true;
             }
         }
 
-        return ['opaque' => $opaque, 'mutated' => array_values(array_unique($mutated))];
-    }
-
-    private function isMassAssignmentCall(Node $node): bool
-    {
-        return $node instanceof MethodCall
-            && $node->var instanceof Variable
-            && $node->var->name === 'this'
-            && $node->name instanceof Node\Identifier
-            && \in_array($node->name->toString(), self::OPAQUE_MUTATORS, true);
+        return $mutated;
     }
 
     /**
-     * Property names reset by `$this->reset('a', 'b')` / `reset(['a', 'b'])`.
-     * Returns null when the call is opaque: a different mass-assign method
-     * (fill/mergeData/resetExcept), no-arg reset() (resets all), or non-literal
-     * arguments.
-     *
-     * @return list<string>|null
+     * Livewire calls `updatedItems` or `updatedItemsName` when the client updates
+     * `items` or `items.name`, so such a hook means the property is expected to change.
      */
-    private function resetTargetNames(MethodCall $call): ?array
+    private function hasUpdateHook(ComponentMethods $methods, string $property): bool
     {
-        if (! $call->name instanceof Node\Identifier || $call->name->toString() !== 'reset') {
-            return null;
+        $studly = str_replace(' ', '', ucwords(str_replace(['-', '_'], ' ', $property)));
+
+        foreach ($methods->all() as $method) {
+            $hook = preg_replace('/^(?:updating|updated)/', '', $method->name->toString(), 1, $count);
+
+            if ($count === 1 && preg_match('/^' . preg_quote($studly, '/') . '(?:[A-Z0-9_]|$)/', (string) $hook) === 1) {
+                return true;
+            }
         }
-        if ($call->args === []) {
-            return null;
+
+        return false;
+    }
+
+    /**
+     * Properties named in `$rules`, `rules()`, or a literal `validate()` or
+     * `validateOnly()` call, which all treat the property as input.
+     *
+     * @return array<string, true>
+     */
+    private function validatedProperties(Class_ $class, ComponentMethods $methods): array
+    {
+        $paths = [];
+
+        foreach ($class->stmts as $stmt) {
+            if (! $stmt instanceof Property) {
+                continue;
+            }
+            foreach ($stmt->props as $prop) {
+                if ($prop->name->toString() === 'rules' && $prop->default instanceof Array_) {
+                    $paths = [...$paths, ...$this->literalKeys($prop->default)];
+                }
+            }
+        }
+
+        $rules = $methods->find('rules');
+        if ($rules !== null) {
+            foreach (ComponentMethods::findIn($rules, static fn (Node $node): bool => $node instanceof Return_) as $return) {
+                if ($return instanceof Return_ && $return->expr instanceof Array_) {
+                    $paths = [...$paths, ...$this->literalKeys($return->expr)];
+                }
+            }
+        }
+
+        foreach ($methods->all() as $method) {
+            foreach (ComponentMethods::findIn($method, static fn (Node $node): bool => $node instanceof MethodCall) as $call) {
+                if ($call instanceof MethodCall) {
+                    $paths = [...$paths, ...$this->pathsValidatedBy($call)];
+                }
+            }
         }
 
         $names = [];
-        foreach ($call->args as $arg) {
-            if (! $arg instanceof Node\Arg) {
-                return null; // variadic / named-arg spread — can't enumerate
-            }
-
-            $value = $arg->value;
-            if ($value instanceof String_) {
-                $names[] = $value->value;
-
-                continue;
-            }
-            if ($value instanceof Array_) {
-                foreach ($value->items as $item) {
-                    if ($item === null || ! $item->value instanceof String_) {
-                        return null;
-                    }
-                    $names[] = $item->value->value;
-                }
-
-                continue;
-            }
-
-            return null; // dynamic argument
+        foreach ($paths as $path) {
+            $names[PropertyWrites::rootOf($path)] = true;
         }
 
         return $names;
     }
 
-    private function isDynamicPropertyWrite(Node $node): bool
+    /**
+     * @return list<string>
+     */
+    private function pathsValidatedBy(MethodCall $call): array
     {
-        $target = $this->mutationTarget($node);
-        while ($target instanceof ArrayDimFetch) {
-            $target = $target->var;
+        $method = ComponentMethods::thisMember($call);
+        if ($method === null || $call->isFirstClassCallable()) {
+            return [];
         }
 
-        return $target instanceof PropertyFetch
-            && $target->var instanceof Variable
-            && $target->var->name === 'this'
-            && ! $target->name instanceof Node\Identifier;
-    }
+        $first = $call->getArgs()[0]->value ?? null;
 
-    private function isMutatingNode(Node $node): bool
-    {
-        return $node instanceof Assign
-            || $node instanceof AssignOp
-            || $node instanceof AssignRef
-            || $node instanceof PreInc
-            || $node instanceof PreDec
-            || $node instanceof PostInc
-            || $node instanceof PostDec;
-    }
-
-    /**
-     * The assignment target of a mutating node. The instanceof arms narrow the
-     * type for PHPStan (all of these expose a public `$var`).
-     */
-    private function mutationTarget(Node $node): ?Node
-    {
-        return match (true) {
-            $node instanceof Assign,
-            $node instanceof AssignOp,
-            $node instanceof AssignRef,
-            $node instanceof PreInc,
-            $node instanceof PreDec,
-            $node instanceof PostInc,
-            $node instanceof PostDec => $node->var,
-            default => null,
+        return match (strtolower($method)) {
+            'validate' => $first instanceof Array_ ? $this->literalKeys($first) : [],
+            'validateonly' => $first instanceof String_ ? [$first->value] : [],
+            default => [],
         };
     }
 
     /**
      * @return list<string>
      */
-    private function extractMutatedPropertyNames(Node $node): array
+    private function literalKeys(Array_ $array): array
     {
-        $target = $this->mutationTarget($node);
+        $keys = [];
 
-        return $target === null ? [] : $this->propertyNamesFromTarget($target);
-    }
-
-    /**
-     * Resolve `$this->prop` names from an assignment target, descending into
-     * `list()` / `[$a, $b]` destructuring and unwrapping `$this->prop[$k]`.
-     *
-     * @return list<string>
-     */
-    private function propertyNamesFromTarget(Node $target): array
-    {
-        if ($target instanceof List_ || $target instanceof Array_) {
-            $names = [];
-            foreach ($target->items as $item) {
-                if ($item === null) {
-                    continue; // skipped slot: [, $b] = …
-                }
-                foreach ($this->propertyNamesFromTarget($item->value) as $name) {
-                    $names[] = $name;
-                }
+        foreach ($array->items as $item) {
+            if ($item->key instanceof String_) {
+                $keys[] = $item->key->value;
             }
-
-            return $names;
         }
 
-        // Unwrap array-write: $this->prop[$k] = ...
-        while ($target instanceof ArrayDimFetch) {
-            $target = $target->var;
-        }
-
-        if (! $target instanceof PropertyFetch) {
-            return [];
-        }
-        if (! $target->var instanceof Variable || $target->var->name !== 'this') {
-            return [];
-        }
-        if (! $target->name instanceof Node\Identifier) {
-            return [];
-        }
-
-        return [$target->name->toString()];
-    }
-
-    /**
-     * Whether the property is typed as a Livewire\Form subtype, resolved via
-     * reflection so subclasses in any namespace are matched.
-     */
-    private function isFormProperty(ClassReflection $classReflection, string $name): bool
-    {
-        if (! $classReflection->hasNativeProperty($name)) {
-            return false;
-        }
-
-        $type = $classReflection->getNativeProperty($name)->getReadableType();
-
-        return (new ObjectType(self::LIVEWIRE_FORM_FQCN))->isSuperTypeOf($type)->yes();
+        return $keys;
     }
 }

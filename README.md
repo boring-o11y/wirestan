@@ -20,7 +20,9 @@ and the IDOR only shows up when someone goes looking for it.
 
 `wirestan` catches them in CI: state the client can tamper with, actions that never
 check authorization, cached data shared between users, and validation that never
-runs. See [Rules](#rules) for the full list.
+runs. It also catches Livewire mistakes that only show up at runtime, like resetting a
+property that can't be reset or writing to a `#[Reactive]` one. See [Rules](#rules)
+for the full list.
 
 ## Requirements
 
@@ -82,6 +84,12 @@ These components are anonymous classes, so messages name them like
 | [LockedUrlConflictRule](#lockedurlconflictrule) | `boringO11yWirestan.lockedUrlConflict` | A property can't be both `#[Locked]` and `#[Url]` |
 | [LegacyComputedAccessorRule](#legacycomputedaccessorrule) | `boringO11yWirestan.legacyComputedAccessor` | `getFooProperty()` accessors are client-callable: use `#[Computed]` |
 | [AuthorizeTargetRule](#authorizetargetrule) | `boringO11yWirestan.authorizeTarget` | `#[Authorize]` must target something that resolves |
+| [ReactiveMutationRule](#reactivemutationrule) | `boringO11yWirestan.reactiveMutation` | `#[Reactive]` properties can't be written |
+| [ComputedMisuseRule](#computedmisuserule) | `boringO11yWirestan.computedMisuse` | `#[Computed]` methods must be usable as computed properties |
+| [ResetTargetRule](#resettargetrule) | `boringO11yWirestan.resetTarget` | `reset()` and `pull()` must not target what they can't restore |
+| [NonPersistedStateRule](#nonpersistedstaterule) | `boringO11yWirestan.nonPersistedState` | Non-public state set in `mount()` is gone on the next request |
+| [AsyncMutationRule](#asyncmutationrule) | `boringO11yWirestan.asyncMutation` | `#[Async]` actions must not write public properties |
+| [ReservedActionNameRule](#reservedactionnamerule) | `boringO11yWirestan.reservedActionName` | Actions can't be named after `$wire`'s own methods |
 
 ### `LockedPublicPropertyRule`
 
@@ -133,8 +141,11 @@ mutation, so they do *not* exempt a property. A write anywhere else does.
 
 Recognised as a mutation: plain assignment, compound assignment (`.=`, `+=`, …),
 reference assignment, `++`/`--`, array-element writes (`$this->rows[] = …`),
-list destructuring (`[$this->a, $this->b] = …`), and `$this->reset('name')`
-with literal property names.
+list destructuring (`[$this->a, $this->b] = …`), `unset($this->rows[$key])`,
+changes through in-place functions like `sort($this->rows)`, assignment by a `foreach`
+or a by-reference loop over the property, writes to an object it holds
+(`$this->dto->name = …`), and `$this->reset('name')` or `$this->pull('name')` with
+literal property names. Methods from traits count.
 
 #### What the rule deliberately skips
 
@@ -146,6 +157,18 @@ with literal property names.
   `CannotUpdateLockedPropertyException`. This rule doesn't look inside Form classes
   either, and their fields are client-editable: `$wire.set('form.postId', 2)` works.
   Add `#[Locked]` yourself to any Form field the server controls.
+- **Properties bound in a view.** Locking a `wire:model` input throws
+  `CannotUpdateLockedPropertyException`, so the rule reads the component's views. See
+  [How views are found](#how-views-are-found).
+- **Properties with an input attribute**: `#[Validate]`, `#[Rule]`, `#[Modelable]` and
+  `#[Session]` properties are set by the client, and locking them throws too.
+  `#[Reactive]` ones can't be set by the client at all.
+- **Properties with validation rules** in `$rules`, `rules()`, or a literal `validate()`
+  or `validateOnly()` call, for the same reason.
+- **Properties with an update hook** such as `updatedTitle()`, including nested ones
+  such as `updatedItemsName()`. Livewire calls those when the client updates the property.
+- **Models and Eloquent collections**, by native type. Livewire ignores client writes to
+  these: `set('post', 2)` keeps the record and `set('post.id', 2)` throws.
 - **`#[Url]` properties.** The visitor sets these from the query string, so they
   are input, and locking one is what
   [`LockedUrlConflictRule`](#lockedurlconflictrule) reports.
@@ -160,6 +183,49 @@ with literal property names.
   non-literal-argument `$this->reset()`, or a dynamic write `$this->{$name} = …`.
   Immutability can no longer be proven statically, so the rule stays quiet rather
   than emit false positives.
+
+#### How views are found
+
+The rule looks for a component's Blade source the way Livewire does:
+
+- A single-file component's view is the rest of its file.
+- A multi-file component's view is the `.blade.php` file next to its `.php` file.
+- Otherwise it reads what `render()` returns: an inline template, a literal `view('x')`,
+  `view()->make('x')` or `View::make('x')`.
+- With no `render()`, it reads `livewire/<kebab-name>.blade.php`, using the part of the
+  class name after `Livewire\`.
+
+It follows `@include`, `@includeIf`, `@includeWhen`, `@includeUnless`, `@includeFirst`
+and `@each` when the view name is a literal.
+
+These count as binding a property: `wire:model` with any modifiers, `$set`, `$toggle`,
+`$wire.set`, `$wire.entangle`, `@entangle`, `$wire.upload`, `$wire.x = …`,
+`x-model="$wire.x"`, and `wire:click="x++"`. A binding whose name is computed, such as
+`wire:model="{{ $field }}"`, could be any property, so the rule stays quiet on the whole
+component. Commented-out bindings don't count.
+
+If it can't read every view, such as a namespaced `pages::show` or a view name held in
+a variable, the rule still reports the property and adds a tip about it. It can't see:
+
+- A binding inside a Blade component's own template, such as a literal `wire:model` in
+  `components/email-input.blade.php`. One passed through as `<x-input wire:model="x">`
+  is fine.
+- A child component's `wire:model="$parent.x"`, which binds a property of the parent.
+
+Views are read from `resources/views` under the directory you run PHPStan in. Change
+that with `viewPaths`:
+
+```neon
+parameters:
+    wirestan:
+        viewPaths:
+            - %currentWorkingDirectory%/resources/views
+            - %currentWorkingDirectory%/modules/billing/views
+```
+
+On PHPStan 2.3 or later, editing a view re-analyses only the components that read it.
+Older versions can't track this, so run `vendor/bin/phpstan clear-result-cache` after
+changing a binding.
 
 #### Configuration
 
@@ -354,6 +420,156 @@ public function destroy(Comment $comment) {}
 Valid property targets are public properties, including nested paths such as
 `post.author`, and computed properties.
 
+### `ReactiveMutationRule`
+
+Reports writes to `#[Reactive]` properties. The value belongs to the parent, and any
+change throws `CannotMutateReactivePropException`, including in `mount()`, `boot()`,
+`hydrate()` and `render()`.
+
+```php
+#[Reactive]
+public int $count = 0;
+
+public function mount(): void
+{
+    $this->count = 1;  // ← flagged
+}
+
+public function clear(): void
+{
+    $this->reset();    // ← flagged: resets $count too
+}
+```
+
+Writes in `__construct()` and `dehydrate()` aren't flagged, because neither throws. A
+`fill()` whose keys aren't literal isn't flagged either, because its targets are unknown.
+
+### `ComputedMisuseRule`
+
+Reports `#[Computed]` methods that can't work as computed properties:
+
+```php
+public string $total = '';
+
+#[Computed]
+public function total(): int      // ← flagged: the property answers $this->total first
+{
+    return 1;
+}
+
+#[Computed]
+public function rows(Repo $repo)  // ← flagged: throws ArgumentCountError
+{
+    return $repo->all();
+}
+
+public function export()
+{
+    return $this->rows();         // ← flagged: runs it again, use $this->rows
+}
+```
+
+Livewire doesn't inject dependencies into computed methods, so a class-typed parameter
+fails like any other. A same-named property of any visibility hides the method, unless
+it's static. `#[Computed]` on a `Livewire\Form` is flagged too: Livewire ignores it there,
+and reading `$form->name` throws. `$this->rows(5)` isn't flagged, because calling it is
+the only way to pass an argument.
+
+### `ResetTargetRule`
+
+Reports `reset()`, `pull()` and `resetExcept()` calls that throw, either straight away
+or on the next read of the property.
+
+```php
+public string $title;          // typed, no default
+public Post $post;             // typed, no default
+protected string $token = '';
+
+public function clear()
+{
+    $this->reset('titel');     // ← flagged: ReflectionException, no such property
+    $this->reset('token');     // ← flagged: Error, non-public property
+    $this->reset('title');     // ← flagged: unset, so the next read throws
+    $this->reset();            // ← flagged: unsets $title and $post
+}
+```
+
+Livewire restores each property from a fresh instance, so a typed property with no
+default has nothing to restore and gets unset. `Livewire\Form` properties are exempt,
+because Livewire resets their fields instead. So is a property the same method assigns,
+or the constructor sets. Only literal names are checked, and calls on Form objects aren't.
+
+### `NonPersistedStateRule`
+
+Reports non-public properties set in `mount()` and read on later requests. Only public
+properties travel in the snapshot, so the value is gone after the first request.
+
+```php
+protected Client $client;
+
+public function mount(Client $client)
+{
+    $this->client = $client;  // ← flagged
+}
+
+public function send()
+{
+    $this->client->post();    // Error: must not be accessed before initialization
+}
+```
+
+Set it in `boot()` or `hydrate()` instead, which run on every request. A write in any
+method that runs after mount counts as re-seeding it, such as `$this->client ??= …` in
+a helper. A value only read during mount, by `mount()` or a non-public helper only it
+calls, isn't flagged. The rule stays quiet on properties declared on a parent class and
+on components with a dynamic `$this->{$name} = …` write.
+
+### `AsyncMutationRule`
+
+Reports `#[Async]` actions that write public properties, directly or through a `$this->`
+helper. Async actions run in parallel from the same starting state, so concurrent calls
+overwrite each other, and Livewire's docs say never to use them this way.
+
+```php
+#[Async]
+public function increment()
+{
+    $this->count++;  // ← flagged: five quick clicks can add up to one
+}
+
+#[Async]
+public function track()
+{
+    Analytics::track('viewed', $this->url);  // fine
+}
+```
+
+Writes to non-public properties and to a model's attributes are ignored, because neither
+is in the snapshot. The rule reads the attribute only, so it doesn't see `wire:click.async`.
+
+### `ReservedActionNameRule`
+
+Reports actions named like one of `$wire`'s own methods, such as `upload`, `get`, `set`,
+`call`, `on`, `watch` or `commit`. `wire:click="upload"` runs `$wire.upload`, and `$wire`
+resolves its own names before calling the server, so the action never runs and nothing
+reports why.
+
+```php
+public function upload()       // ← flagged
+{
+    $this->photo->store('photos');
+}
+
+public function uploadPhoto()  // fine
+{
+    $this->photo->store('photos');
+}
+```
+
+The list comes from Livewire 4, so a few names, such as `dirty` and `island`, are only
+reserved from that version on. Overrides of methods from a parent class, such as
+`dispatch()`, aren't flagged.
+
 ## Adopting on an existing codebase
 
 The rules will light up on any Livewire codebase that predates them. Generate a
@@ -366,8 +582,8 @@ vendor/bin/phpstan analyse --generate-baseline
 
 Each `LockedPublicPropertyRule` entry is a real decision. Add `#[Locked]` where the
 property is server-controlled. Leave a genuine `wire:model` input unlocked, because
-locking it throws `CannotUpdateLockedPropertyException`. The rule reads PHP, not your
-views, so it keeps flagging an input that no PHP code writes to.
+locking it throws `CannotUpdateLockedPropertyException`. The rule reads your views to
+recognise those, but it [can't see every binding](#how-views-are-found).
 
 To silence one of those, or any other individual finding, use the error identifier:
 
@@ -387,7 +603,8 @@ composer test      # phpunit
 composer phpstan   # analyse the package itself
 ```
 
-Tests use PHPStan's `RuleTestCase` against fixtures in `tests/Fixtures`, with
+Developing the package needs PHPStan 2.3 or later. Tests use PHPStan's `RuleTestCase`
+against fixtures in `tests/Fixtures`, with
 minimal `Livewire\*` and `Illuminate\*` stubs in `tests/Stubs` so the package has
 no runtime dependency on Livewire itself.
 

@@ -114,6 +114,15 @@ final class ComponentMethods
     }
 
     /**
+     * Where to report an error about a line inside a method, on the same terms as
+     * reportingLine().
+     */
+    public function reportingLineWithin(ClassMethod $method, int $line): int
+    {
+        return isset($this->traitMethods[$method->name->toLowerString()]) ? $this->classLine : $line;
+    }
+
+    /**
      * The method itself plus everything it reaches through `$this->method()` or a
      * `$this->computedProperty` read.
      *
@@ -171,14 +180,30 @@ final class ComponentMethods
             }
         }
 
-        foreach ($class->getTraits(true) as $trait) {
-            $traitName = $trait->getNativeReflection()->getShortName();
-            if (\in_array($name, ['mount' . $traitName, 'boot' . $traitName, 'booted' . $traitName], true)) {
-                return false;
-            }
+        if (self::isTraitHook($name, $class, 'mount', 'boot', 'booted')) {
+            return false;
         }
 
         return ! LivewireAttributes::has($method->attrGroups, LivewireAttributes::COMPUTED);
+    }
+
+    /**
+     * Whether Livewire calls this as a `<prefix><TraitName>` hook, such as
+     * `bootWithSorting`, for a trait the class uses.
+     */
+    public static function isTraitHook(string $method, ClassReflection $class, string ...$prefixes): bool
+    {
+        foreach ($class->getTraits(true) as $trait) {
+            $traitName = $trait->getNativeReflection()->getShortName();
+
+            foreach ($prefixes as $prefix) {
+                if (strcasecmp($method, $prefix . $traitName) === 0) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
     }
 
     public static function isClientCallable(ClassMethod $method): bool

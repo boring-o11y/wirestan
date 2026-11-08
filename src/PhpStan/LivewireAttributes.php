@@ -16,15 +16,23 @@ use PHPStan\BetterReflection\Reflection\Adapter\ReflectionAttribute;
  */
 final class LivewireAttributes
 {
+    public const ASYNC = 'Livewire\\Attributes\\Async';
+
     public const AUTHORIZE = 'Livewire\\Attributes\\Authorize';
 
     public const COMPUTED = 'Livewire\\Attributes\\Computed';
 
     public const LOCKED = 'Livewire\\Attributes\\Locked';
 
+    public const MODELABLE = 'Livewire\\Attributes\\Modelable';
+
     public const ON = 'Livewire\\Attributes\\On';
 
+    public const REACTIVE = 'Livewire\\Attributes\\Reactive';
+
     public const RULE = 'Livewire\\Attributes\\Rule';
+
+    public const SESSION = 'Livewire\\Attributes\\Session';
 
     public const URL = 'Livewire\\Attributes\\Url';
 

@@ -10,4 +10,9 @@ abstract class Component
     {
         return null;
     }
+
+    public function dispatch(string $event, mixed ...$params): mixed
+    {
+        return null;
+    }
 }
