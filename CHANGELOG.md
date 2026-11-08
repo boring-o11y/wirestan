@@ -15,6 +15,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `AsyncMutationRule`: `#[Async]` actions must not write public properties.
 - `ReservedActionNameRule`: actions can't be named after `$wire`'s own methods, such as `upload` or `get`.
 - `wirestan.viewPaths` parameter, for where to find the Blade views of a component.
+- `wirestan.viewNamespaces` parameter, for where to find namespaced views such as `billing::invoice`.
 
 ### Fixed
 

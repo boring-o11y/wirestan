@@ -204,8 +204,9 @@ These count as binding a property: `wire:model` with any modifiers, `$set`, `$to
 `wire:model="{{ $field }}"`, could be any property, so the rule stays quiet on the whole
 component. Commented-out bindings don't count.
 
-If it can't read every view, such as a namespaced `pages::show` or a view name held in
-a variable, the rule still reports the property and adds a tip about it. It can't see:
+If it can't read every view, such as a `pages::show` whose namespace isn't configured
+or a view name held in a variable, the rule still reports the property and adds a tip
+about it. It can't see:
 
 - A binding inside a Blade component's own template, such as a literal `wire:model` in
   `components/email-input.blade.php`. One passed through as `<x-input wire:model="x">`
@@ -221,6 +222,20 @@ parameters:
         viewPaths:
             - %currentWorkingDirectory%/resources/views
             - %currentWorkingDirectory%/modules/billing/views
+```
+
+A namespaced view, such as `billing::invoice` or Livewire's `pages::show`, is read from
+the directories you list for its namespace, in order. Mirror what your app passes to
+`loadViewsFrom()` or `View::addNamespace()`:
+
+```neon
+parameters:
+    wirestan:
+        viewNamespaces:
+            billing:
+                - %currentWorkingDirectory%/modules/billing/views
+            pages:
+                - %currentWorkingDirectory%/resources/views/pages
 ```
 
 On PHPStan 2.3 or later, editing a view re-analyses only the components that read it.

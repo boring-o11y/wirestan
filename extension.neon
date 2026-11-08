@@ -3,6 +3,7 @@ parametersSchema:
         reservedProperties: listOf(string())
         authorizationMethods: listOf(string())
         viewPaths: listOf(string())
+        viewNamespaces: arrayOf(listOf(string()), string())
     ])
 
 parameters:
@@ -27,6 +28,9 @@ parameters:
         # so it doesn't ask for #[Locked] on a property bound with wire:model.
         viewPaths:
             - %currentWorkingDirectory%/resources/views
+        # The directories for each view namespace, such as `shop` in `shop::cart`, so
+        # LockedPublicPropertyRule can read those views too.
+        viewNamespaces: []
 
 services:
     -
@@ -39,6 +43,7 @@ services:
         class: BoringO11y\Wirestan\PhpStan\ComponentViews
         arguments:
             viewPaths: %wirestan.viewPaths%
+            viewNamespaces: %wirestan.viewNamespaces%
     -
         class: BoringO11y\Wirestan\PhpStan\Rules\LockedPublicPropertyRule
         arguments:

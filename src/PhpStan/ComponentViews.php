@@ -28,9 +28,11 @@ final class ComponentViews
 {
     /**
      * @param  list<string>  $viewPaths
+     * @param  array<string, list<string>>  $viewNamespaces  the directories each view namespace is searched in, in order
      */
     public function __construct(
         private readonly array $viewPaths,
+        private readonly array $viewNamespaces = [],
     ) {}
 
     public function bindingsOf(ClassMethodsNode $node, ComponentMethods $methods, Scope $scope): ViewBindings
@@ -140,7 +142,7 @@ final class ComponentViews
             }
             $seen[$view] = true;
 
-            if (isset($bindings->optionalIncludes[$view]) && ! str_contains($view, '::') && $this->locate($view, $scope) === null) {
+            if (isset($bindings->optionalIncludes[$view]) && $this->searchPaths($view) !== null && $this->locate($view, $scope) === null) {
                 continue;
             }
 
@@ -154,11 +156,6 @@ final class ComponentViews
 
     private function fromView(string $view, Scope $scope): ViewBindings
     {
-        // A namespaced view, such as `pages::post.show`, could live anywhere.
-        if (str_contains($view, '::')) {
-            return ViewBindings::none()->incomplete();
-        }
-
         $path = $this->locate($view, $scope);
 
         return $path === null ? ViewBindings::none()->incomplete() : $this->read($path, $scope);
@@ -166,9 +163,16 @@ final class ComponentViews
 
     private function locate(string $view, Scope $scope): ?string
     {
-        $relative = str_replace('.', '/', $view) . '.blade.php';
+        $searchPaths = $this->searchPaths($view);
 
-        foreach ($this->viewPaths as $root) {
+        if ($searchPaths === null) {
+            return null;
+        }
+
+        [$roots, $name] = $searchPaths;
+        $relative = str_replace('.', '/', $name) . '.blade.php';
+
+        foreach ($roots as $root) {
             $path = rtrim($root, '/') . '/' . $relative;
 
             if (is_file($path)) {
@@ -179,6 +183,24 @@ final class ComponentViews
         }
 
         return null;
+    }
+
+    /**
+     * Where to look for a view and its name there: `shop::cart` is `cart` in the
+     * directories configured for `shop`. Null for a namespace with none configured,
+     * whose views could live anywhere.
+     *
+     * @return array{list<string>, string}|null
+     */
+    private function searchPaths(string $view): ?array
+    {
+        if (! str_contains($view, '::')) {
+            return [$this->viewPaths, $view];
+        }
+
+        [$namespace, $name] = explode('::', $view, 2);
+
+        return isset($this->viewNamespaces[$namespace]) ? [$this->viewNamespaces[$namespace], $name] : null;
     }
 
     private function read(string $path, Scope $scope): ViewBindings

@@ -21,7 +21,10 @@ final class LockedPublicPropertyRuleTest extends RuleTestCase
     {
         return new LockedPublicPropertyRule(
             new LivewireComponentReflectionDetector,
-            new ComponentViews([__DIR__ . '/../Fixtures/views']),
+            new ComponentViews(
+                [__DIR__ . '/../Fixtures/views'],
+                ['Shop' => [__DIR__ . '/../Fixtures/modules/Missing/Views', __DIR__ . '/../Fixtures/modules/Shop/Views']],
+            ),
         );
     }
 
@@ -177,6 +180,14 @@ final class LockedPublicPropertyRuleTest extends RuleTestCase
         $this->analyse(
             [__DIR__ . '/../Fixtures/PhpStan/LockedRenderedViewComponent.php'],
             [[$this->message('LockedRenderedViewComponent'), 23]],
+        );
+    }
+
+    public function test_reads_bindings_from_views_in_a_configured_namespace(): void
+    {
+        $this->analyse(
+            [__DIR__ . '/../Fixtures/PhpStan/LockedNamespacedModuleViewComponent.php'],
+            [[$this->message('LockedNamespacedModuleViewComponent'), 13]],
         );
     }
 
