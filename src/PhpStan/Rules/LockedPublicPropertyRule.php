@@ -34,7 +34,8 @@ use PHPStan\Rules\RuleErrorBuilder;
  *
  * A property the code treats as client input is left alone, because locking it throws
  * CannotUpdateLockedPropertyException: one bound in a view, with an input attribute or
- * an update hook, or named in validation rules. So is one the client can't write.
+ * an update hook, or named in validation rules or the query string. So is one the
+ * client can't write.
  *
  * @implements Rule<ClassMethodsNode>
  */
@@ -112,11 +113,12 @@ final class LockedPublicPropertyRule implements Rule
         }
 
         $validated = $this->validatedProperties($originalNode, $methods);
+        $inQueryString = $this->queryStringProperties($originalNode, $methods);
         $bindings = null;
 
         $errors = [];
         foreach ($publicProperties as $name => $propertyContext) {
-            if (isset($mutated[$name]) || isset($validated[$name])) {
+            if (isset($mutated[$name]) || isset($validated[$name]) || isset($inQueryString[$name])) {
                 continue;
             }
             if (\in_array($name, $this->reservedProperties, true)) {
@@ -244,24 +246,8 @@ final class LockedPublicPropertyRule implements Rule
     {
         $paths = [];
 
-        foreach ($class->stmts as $stmt) {
-            if (! $stmt instanceof Property) {
-                continue;
-            }
-            foreach ($stmt->props as $prop) {
-                if ($prop->name->toString() === 'rules' && $prop->default instanceof Array_) {
-                    $paths = [...$paths, ...$this->literalKeys($prop->default)];
-                }
-            }
-        }
-
-        $rules = $methods->find('rules');
-        if ($rules !== null) {
-            foreach (ComponentMethods::findIn($rules, static fn (Node $node): bool => $node instanceof Return_) as $return) {
-                if ($return instanceof Return_ && $return->expr instanceof Array_) {
-                    $paths = [...$paths, ...$this->literalKeys($return->expr)];
-                }
-            }
+        foreach ($this->configurationArrays($class, $methods, 'rules') as $rules) {
+            $paths = [...$paths, ...$this->literalKeys($rules)];
         }
 
         foreach ($methods->all() as $method) {
@@ -278,6 +264,62 @@ final class LockedPublicPropertyRule implements Rule
         }
 
         return $names;
+    }
+
+    /**
+     * Properties named in the legacy `$queryString` or `queryString()`, as `'page'` or
+     * `'page' => [...]`. Livewire gives each the same URL binding as #[Url].
+     *
+     * @return array<string, true>
+     */
+    private function queryStringProperties(Class_ $class, ComponentMethods $methods): array
+    {
+        $names = [];
+
+        foreach ($this->configurationArrays($class, $methods, 'queryString') as $queryString) {
+            foreach ($queryString->items as $item) {
+                $path = $item->key ?? $item->value;
+
+                if ($path instanceof String_) {
+                    $names[PropertyWrites::rootOf($path->value)] = true;
+                }
+            }
+        }
+
+        return $names;
+    }
+
+    /**
+     * The literal arrays a component configures Livewire with through a property or a
+     * same-named method, such as `$rules` and `rules()`.
+     *
+     * @return list<Array_>
+     */
+    private function configurationArrays(Class_ $class, ComponentMethods $methods, string $name): array
+    {
+        $arrays = [];
+
+        foreach ($class->stmts as $stmt) {
+            if (! $stmt instanceof Property) {
+                continue;
+            }
+            foreach ($stmt->props as $prop) {
+                if ($prop->name->toString() === $name && $prop->default instanceof Array_) {
+                    $arrays[] = $prop->default;
+                }
+            }
+        }
+
+        $method = $methods->find($name);
+        if ($method !== null) {
+            foreach (ComponentMethods::findIn($method, static fn (Node $node): bool => $node instanceof Return_) as $return) {
+                if ($return instanceof Return_ && $return->expr instanceof Array_) {
+                    $arrays[] = $return->expr;
+                }
+            }
+        }
+
+        return $arrays;
     }
 
     /**

@@ -142,6 +142,17 @@ final class LockedPublicPropertyRuleTest extends RuleTestCase
         $this->assertOnlyBookingIdFlagged('LockedValidationTargetsComponent', 19);
     }
 
+    public function test_does_not_flag_property_in_the_query_string(): void
+    {
+        $this->analyse(
+            [__DIR__ . '/../Fixtures/PhpStan/LockedQueryStringComponent.php'],
+            [
+                [$this->message('LockedQueryStringComponent'), 15, self::TIP],
+                [$this->message('LockedQueryStringMethodComponent'), 24, self::TIP],
+            ],
+        );
+    }
+
     public function test_treats_in_place_changes_as_mutations(): void
     {
         $this->assertOnlyBookingIdFlagged('LockedInPlaceWritesComponent', 29);

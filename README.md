@@ -171,7 +171,9 @@ literal property names. Methods from traits count.
   these: `set('post', 2)` keeps the record and `set('post.id', 2)` throws.
 - **`#[Url]` properties.** The visitor sets these from the query string, so they
   are input, and locking one is what
-  [`LockedUrlConflictRule`](#lockedurlconflictrule) reports.
+  [`LockedUrlConflictRule`](#lockedurlconflictrule) reports. The same goes for
+  properties named in the legacy `$queryString` or `queryString()`, which Livewire
+  binds to the URL the same way.
 - **Framework-reserved properties**: `$listeners`, `$rules`, `$messages`,
   `$validationAttributes`, `$validationCustomValues`, `$queryString`,
   `$paginationTheme`. The fix for these is `protected`, not `#[Locked]`, which

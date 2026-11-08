@@ -23,6 +23,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   - properties bound in the component's views, with `wire:model` and similar;
   - `#[Validate]`, `#[Rule]`, `#[Modelable]`, `#[Reactive]` and `#[Session]` properties;
   - properties named in `$rules`, `rules()`, or a literal `validate()` or `validateOnly()` call;
+  - properties named in the legacy `$queryString` or `queryString()`, which are bound to the URL like `#[Url]` ones;
   - properties with an `updated*` or `updating*` hook;
   - models and Eloquent collections, which ignore client writes.
 - `LockedPublicPropertyRule` now counts writes it missed: `unset($this->rows[$key])`, in-place functions like `sort($this->rows)`, `foreach` assignment, by-reference loops and references, `$this->dto->name = …`, `$this->pull('name')`, and any write from a trait method.
