@@ -12,7 +12,7 @@
         "phpstan-extension",
         "phpstan-rules"
     ],
-    "homepage": "https://github.com/boring-o11y/wirestan",
+    "homepage": "https://boring-observability.dev/open-source/wirestan",
     "license": "MIT",
     "authors": [
         {
